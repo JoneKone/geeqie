@@ -1452,9 +1452,19 @@ gint exif_item_get_integer(ExifItem *item, gint *value)
 			*value = static_cast<gint>((static_cast<gint32 *>(item->data))[0]);
 			return TRUE;
 			break;
-		case EXIF_FORMAT_LONG_UNSIGNED: /**< @FIXME overflow possible */
-			*value = static_cast<gint>((static_cast<guint32 *>(item->data))[0]);
+		case EXIF_FORMAT_LONG_UNSIGNED:
+			{
+			guint32 tmp = (static_cast<guint32 *>(item->data))[0];
+			if (tmp > G_MAXINT)
+			{
+			*value = G_MAXINT;
+			}
+			else
+			{
+			*value = static_cast<gint>(tmp);
+			}
 			return TRUE;
+			}
 		default:
 			/* all other type return FALSE */
 			break;
