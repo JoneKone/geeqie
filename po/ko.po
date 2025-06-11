@@ -6668,7 +6668,7 @@ msgstr "제한하지 않으려면 0으로 설정하기"
 
 #: src/preferences.cc:3977
 #, fuzzy
-msgid "Alternate similarity alogorithm"
+msgid "Alternate similarity algorithm"
 msgstr "파일 유사도 캐시"
 
 #: src/preferences.cc:3979

@@ -6768,7 +6768,7 @@ msgstr "Geef 0 op voor onbeperkt"
 
 #: src/preferences.cc:3977
 #, fuzzy
-msgid "Alternate similarity alogorithm"
+msgid "Alternate similarity algorithm"
 msgstr "Gelijke bestanden in cache"
 
 #: src/preferences.cc:3979
