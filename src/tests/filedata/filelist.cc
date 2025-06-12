@@ -280,8 +280,8 @@ TEST_F(FileDataSortTest, CaseSensitivity)
 	// upper-case versions to sort earlier-than (less-than) the lower-case
 	// versions when case is considered.
 	EXPECT_EQ(sort_compare_filedata(fd_upper_1, fd_lower_1, &sort_by_name_without_case), 0);
-	// BUG[xsdg]: The following expectation fails, because SORT_NUMBER disregards
-	// the case_sensitive setting.
+        // The following expectation verifies that SORT_NUMBER honors the
+        // case_sensitive setting.
 	EXPECT_EQ(sort_compare_filedata(fd_upper_1, fd_lower_1, &sort_by_number_without_case), 0);
 	EXPECT_LT(sort_compare_filedata(fd_upper_1, fd_lower_1, &sort_by_name_with_case), 0);
 	EXPECT_LT(sort_compare_filedata(fd_upper_1, fd_lower_1, &sort_by_number_with_case), 0);
