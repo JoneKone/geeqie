@@ -42,6 +42,7 @@
 #include "intl.h"
 #include "metadata.h"
 #include "typedefs.h"
+#include "ui-fileops.h"
 #include "ui-misc.h"
 
 namespace {
@@ -49,10 +50,10 @@ namespace {
 struct TagData
 {
 	gchar *key;
-	gchar *title;
+	GtkWidget *image_overlay_template_view;
 };
 
-constexpr struct
+constexpr struct OsdTag
 {
 	const gchar *key;
 	const gchar *title;
@@ -106,63 +107,183 @@ constexpr std::array<GtkTargetEntry, 1> osd_drag_types{{
 	{ const_cast<gchar *>("text/plain"), GTK_TARGET_SAME_APP, TARGET_TEXT_PLAIN }
 }};
 
-} // namespace
-
-static void tag_button_cb(GtkWidget *widget, gpointer data)
+void tag_data_add_key_to_template(TagData *td)
 {
-	auto image_overlay_template_view = static_cast<GtkTextView *>(data);
-	GtkTextBuffer *buffer;
-	TagData *td;
+	GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(td->image_overlay_template_view));
+	gtk_text_buffer_insert_at_cursor(buffer, td->key, -1);
 
-	buffer = gtk_text_view_get_buffer(image_overlay_template_view);
-	td = static_cast<TagData *>(g_object_get_data(G_OBJECT(widget), "tag_data"));
-	gtk_text_buffer_insert_at_cursor(GTK_TEXT_BUFFER(buffer), td->key, -1);
-
-	gtk_widget_grab_focus(GTK_WIDGET(image_overlay_template_view));
+	gtk_widget_grab_focus(td->image_overlay_template_view);
 }
 
-static void osd_dnd_get_cb(GtkWidget *btn, GdkDragContext *, GtkSelectionData *selection_data, guint, guint, gpointer data)
+void tag_data_add_key_to_selection(TagData *td, GdkDragContext *, GtkSelectionData *selection_data, guint, guint, gpointer)
 {
-	TagData *td;
-	auto image_overlay_template_view = static_cast<GtkTextView *>(data);
-
-	td = static_cast<TagData *>(g_object_get_data(G_OBJECT(btn), "tag_data"));
 	gtk_selection_data_set_text(selection_data, td->key, -1);
-
-	gtk_widget_grab_focus(GTK_WIDGET(image_overlay_template_view));
+	gtk_widget_grab_focus(td->image_overlay_template_view);
 }
 
-static void tag_data_free(gpointer data)
+void tag_data_free(TagData *td)
 {
-	auto *td = static_cast<TagData *>(data);
-
 	g_free(td->key);
-	g_free(td->title);
 	g_free(td);
 }
 
-static void set_osd_button(GtkGrid *grid, const gint rows, const gint cols, const gchar *key, const gchar *title, GtkWidget *template_view)
+GtkWidget *osd_tag_button_new(const OsdTag &tag, GtkWidget *template_view)
 {
-	GtkWidget *new_button;
-	TagData *td;
+	auto *td = g_new0(TagData, 1);
+	td->key = g_strdup(tag.key);
+	td->image_overlay_template_view = template_view;
 
-	new_button = gtk_button_new_with_label(title);
-	g_signal_connect(G_OBJECT(new_button), "clicked", G_CALLBACK(tag_button_cb), template_view);
-	gtk_widget_show(new_button);
+	GtkWidget *tag_button = gtk_button_new_with_label(tag.title);
+	g_signal_connect_swapped(G_OBJECT(tag_button), "clicked", G_CALLBACK(tag_data_add_key_to_template), td);
+	g_signal_connect_swapped(G_OBJECT(tag_button), "destroy", G_CALLBACK(tag_data_free), td);
+	gtk_widget_show(tag_button);
 
-	td = g_new0(TagData, 1);
-	td->key = g_strdup(key);
-	td->title = g_strdup(title);
+	gtk_drag_source_set(tag_button, GDK_BUTTON1_MASK, osd_drag_types.data(), osd_drag_types.size(), GDK_ACTION_COPY);
+	g_signal_connect_swapped(G_OBJECT(tag_button), "drag_data_get", G_CALLBACK(tag_data_add_key_to_selection), td);
 
-	g_object_set_data_full(G_OBJECT(new_button), "tag_data", td, tag_data_free);
-
-	gtk_drag_source_set(new_button, GDK_BUTTON1_MASK, osd_drag_types.data(), osd_drag_types.size(), GDK_ACTION_COPY);
-	g_signal_connect(G_OBJECT(new_button), "drag_data_get",
-							G_CALLBACK(osd_dnd_get_cb), template_view);
-
-	gtk_grid_attach(grid, new_button, cols, rows, 1, 1);
-
+	return tag_button;
 }
+
+/* Search for optional modifiers
+ * %name:99:extra% -> name = "name", limit=99, extra = "extra"
+ */
+gchar *get_osd_name(const gchar *start, const gchar *end, guint &limit, gchar **extra)
+{
+	const gchar *trunc = nullptr;
+	const gchar *limit_pos = nullptr;
+
+	for (const gchar *p = start + 1; p < end; p++)
+		{
+		if (p[0] == ':')
+			{
+			if (g_ascii_isdigit(p[1]) && !limit_pos)
+				{
+				limit_pos = p + 1;
+				limit = static_cast<guint>(atoi(limit_pos));
+
+				if (!trunc) trunc = p;
+				}
+			else
+				{
+				const gchar *extra_pos = p + 1;
+				*extra = g_strndup(extra_pos, end - extra_pos);
+
+				if (!trunc) trunc = p;
+				break;
+				}
+			}
+		}
+
+	return g_strndup(start + 1, (trunc ? trunc : end) - start - 1);
+}
+
+gchar *keywords_to_string(FileData *fd)
+{
+	g_assert(fd);
+
+	GList *keywords = metadata_read_list(fd, KEYWORD_KEY, METADATA_PLAIN);
+
+	GString *kwstr = string_list_join(keywords, ", ");
+
+	g_list_free_full(keywords, g_free);
+
+	return g_string_free(kwstr, FALSE);
+}
+
+gchar *get_osd_data(gchar *name, FileData *fd, const OsdTemplate &vars)
+{
+	if (strcmp(name, "keywords") == 0)
+		{
+		return keywords_to_string(fd);
+		}
+
+	if (strcmp(name, "comment") == 0)
+		{
+		return metadata_read_string(fd, COMMENT_KEY, METADATA_PLAIN);
+		}
+
+	if (strcmp(name, "imagecomment") == 0)
+		{
+		return exif_get_image_comment(fd);
+		}
+
+	if (strcmp(name, "rating") == 0)
+		{
+		return metadata_read_string(fd, RATING_KEY, METADATA_PLAIN);
+		}
+
+#if HAVE_LUA
+	constexpr gchar lua_prefix[] = "lua/";
+	const size_t lua_prefix_len = strlen(lua_prefix);
+	if (strncmp(name, "lua/", lua_prefix_len) == 0)
+		{
+		gchar *tmp = strchr(name + lua_prefix_len, '/');
+		if (!tmp) return nullptr;
+
+		*tmp = '\0';
+		return lua_callvalue(fd, name + lua_prefix_len, tmp + 1);
+		}
+#endif
+
+	try
+		{
+		return g_strdup(vars.at(name).c_str());
+		}
+	catch (const std::out_of_range &)
+		{
+		return metadata_read_string(fd, name, METADATA_FORMATTED);
+		}
+
+	return nullptr;
+}
+
+/* Display data between left and right parts of extra string
+ * the data is expressed by a '*' character. A '*' may be escaped
+ * by a \. You should escape all '*' characters, do not rely on the
+ * current implementation which only replaces the first unescaped '*'.
+ * If no "*" is present, the extra string is just appended to data string.
+ * Pango mark up is accepted in left and right parts.
+ * Any \n is replaced by a newline
+ * Examples:
+ * "<i>*</i>\n" -> data is displayed in italics ended with a newline
+ * "\n" 	-> ended with newline
+ * 'ISO *'	-> prefix data with 'ISO ' (ie. 'ISO 100')
+ * "\**\*"	-> prefix data with a star, and append a star (ie. "*100*")
+ * "\\*"	-> prefix data with an anti slash (ie "\100")
+ * 'Collection <b>*</b>\n' -> display data in bold prefixed by 'Collection ' and a newline is appended
+ */
+/** @FIXME using background / foreground colors lead to weird results.
+ */
+gchar *add_osd_extra(const gchar *data, gchar *extra)
+{
+	gchar *left = nullptr;
+	gchar *right = extra;
+	guint len = strlen(extra);
+
+	/* Search for left and right parts and unescape characters */
+	for (gchar *p = extra; *p; p++, len--)
+		if (p[0] == '\\')
+			{
+			if (p[1] == 'n')
+				{
+				memmove(p + 1, p + 2, --len);
+				p[0] = '\n';
+				}
+			else if (p[1] != '\0')
+				memmove(p, p + 1, len--); // includes \0
+			}
+		else if (p[0] == '*' && !left)
+			{
+			right = p + 1;
+			left = extra;
+			}
+
+	if (left) right[-1] = '\0';
+
+	return g_strdup_printf("%s%s%s", left ? left : "", data, right);
+}
+
+} // namespace
 
 GtkWidget *osd_new(gint max_cols, GtkWidget *template_view)
 {
@@ -200,154 +321,45 @@ GtkWidget *osd_new(gint max_cols, GtkWidget *template_view)
 		{
 		for (gint cols = 0; cols < max_cols && i < entries; cols++, i++)
 			{
-			set_osd_button(grid, rows, cols, predefined_tags[i].key, predefined_tags[i].title, template_view);
+			GtkWidget *button = osd_tag_button_new(predefined_tags[i], template_view);
+			gtk_grid_attach(grid, button, cols, rows, 1, 1);
 			}
 		}
 	return vbox;
 }
 
-static gchar *keywords_to_string(FileData *fd)
-{
-	GList *keywords;
-	GString *kwstr = nullptr;
-
-	g_assert(fd);
-
-	keywords = metadata_read_list(fd, KEYWORD_KEY, METADATA_PLAIN);
-
-	if (keywords)
-		{
-		GList *work = keywords;
-
-		while (work)
-			{
-			auto kw = static_cast<gchar *>(work->data);
-			work = work->next;
-
-			if (!kw) continue;
-			if (!kwstr)
-				kwstr = g_string_new("");
-			else
-				g_string_append(kwstr, ", ");
-
-			g_string_append(kwstr, kw);
-			}
-		g_list_free_full(keywords, g_free);
-		}
-
-	if (kwstr)
-		{
-		return g_string_free(kwstr, FALSE);
-		}
-
-	return nullptr;
-}
-
 gchar *image_osd_mkinfo(const gchar *str, FileData *fd, const OsdTemplate &vars)
 {
-	gchar delim = '%';
-	gchar imp = '|';
-	constexpr gchar sep[] = " - ";
-	const size_t sep_len = strlen(sep);
-	gchar *start;
-	gchar *end;
-	guint pos;
-	guint prev;
-	gboolean want_separator = FALSE;
-	GString *osd_info;
-	gchar *ret;
-
 	if (!str || !*str) return g_strdup("");
 
-	osd_info = g_string_new(str);
+	constexpr gchar delim = '%';
+	constexpr gchar imp = '|';
+	constexpr gchar sep[] = " - ";
+	const size_t sep_len = strlen(sep);
+	gboolean want_separator = FALSE;
 
-	prev = -1;
+	GString *osd_info = g_string_new(str);
 
+	guint prev = -1;
+
+	// @TODO Use string split functions instead of manual searching for delimiters
 	while (TRUE)
 		{
-		guint limit = 0;
-		gchar *trunc = nullptr;
-		gchar *limpos = nullptr;
-		gchar *extrapos = nullptr;
-		gchar *p;
-
-		start = strchr(osd_info->str + (prev + 1), delim);
+		gchar *start = strchr(osd_info->str + (prev + 1), delim);
 		if (!start)
 			break;
-		end = strchr(start+1, delim);
+
+		gchar *end = strchr(start + 1, delim);
 		if (!end)
 			break;
 
-		/* Search for optional modifiers
-		 * %name:99:extra% -> name = "name", limit=99, extra = "extra"
-		 */
-		for (p = start + 1; p < end; p++)
-			{
-			if (p[0] == ':')
-				{
-				if (g_ascii_isdigit(p[1]) && !limpos)
-					{
-					limpos = p + 1;
-					if (!trunc) trunc = p;
-					}
-				else
-					{
-					extrapos = p + 1;
-					if (!trunc) trunc = p;
-					break;
-					}
-				}
-			}
+		guint limit = 0;
+		g_autofree gchar *extra = nullptr;
+		g_autofree gchar *name = get_osd_name(start, end, limit, &extra);
 
-		if (limpos)
-			limit = static_cast<guint>(atoi(limpos));
+		guint pos = start - osd_info->str;
 
-		g_autofree gchar *extra = extrapos ? g_strndup(extrapos, end - extrapos) : nullptr;
-
-		g_autofree gchar *name = g_strndup(start+1, (trunc ? trunc : end)-start-1);
-
-		pos = start - osd_info->str;
-
-		g_autofree gchar *data = nullptr;
-
-		if (strcmp(name, "keywords") == 0)
-			{
-			data = keywords_to_string(fd);
-			}
-		else if (strcmp(name, "comment") == 0)
-			{
-			data = metadata_read_string(fd, COMMENT_KEY, METADATA_PLAIN);
-			}
-		else if (strcmp(name, "imagecomment") == 0)
-			{
-			data = exif_get_image_comment(fd);
-			}
-		else if (strcmp(name, "rating") == 0)
-			{
-			data = metadata_read_string(fd, RATING_KEY, METADATA_PLAIN);
-			}
-#if HAVE_LUA
-		else if (strncmp(name, "lua/", 4) == 0)
-			{
-			gchar *tmp;
-			tmp = strchr(name+4, '/');
-			if (!tmp)
-				break;
-			*tmp = '\0';
-			data = lua_callvalue(fd, name+4, tmp+1);
-			}
-#endif
-		else
-			{
-			try
-				{
-				data = g_strdup(vars.at(name).c_str());
-				}
-			catch (const std::out_of_range &)
-				{
-				data = metadata_read_string(fd, name, METADATA_FORMATTED);
-				}
-			}
+		g_autofree gchar *data = get_osd_data(name, fd, vars);
 
 		if (data && *data && limit > 0 && strlen(data) > limit + 3)
 			{
@@ -364,52 +376,11 @@ gchar *image_osd_mkinfo(const gchar *str, FileData *fd, const OsdTemplate &vars)
 
 		if (data && *data && extra)
 			{
-			/* Display data between left and right parts of extra string
-			 * the data is expressed by a '*' character. A '*' may be escaped
-			 * by a \. You should escape all '*' characters, do not rely on the
-			 * current implementation which only replaces the first unescaped '*'.
-			 * If no "*" is present, the extra string is just appended to data string.
-			 * Pango mark up is accepted in left and right parts.
-			 * Any \n is replaced by a newline
-			 * Examples:
-			 * "<i>*</i>\n" -> data is displayed in italics ended with a newline
-			 * "\n" 	-> ended with newline
-			 * 'ISO *'	-> prefix data with 'ISO ' (ie. 'ISO 100')
-			 * "\**\*"	-> prefix data with a star, and append a star (ie. "*100*")
-			 * "\\*"	-> prefix data with an anti slash (ie "\100")
-			 * 'Collection <b>*</b>\n' -> display data in bold prefixed by 'Collection ' and a newline is appended
-			 */
-			/** @FIXME using background / foreground colors lead to weird results.
-			 */
-			gchar *left = nullptr;
-			gchar *right = extra;
-			gchar *p;
-			guint len = strlen(extra);
-
-			/* Search for left and right parts and unescape characters */
-			for (p = extra; *p; p++, len--)
-				if (p[0] == '\\')
-					{
-					if (p[1] == 'n')
-						{
-						memmove(p+1, p+2, --len);
-						p[0] = '\n';
-						}
-					else if (p[1] != '\0')
-						memmove(p, p+1, len--); // includes \0
-					}
-				else if (p[0] == '*' && !left)
-					{
-					right = p + 1;
-					left = extra;
-					}
-
-			if (left) right[-1] = '\0';
-
-			g_autofree gchar *new_data = g_strdup_printf("%s%s%s", left ? left : "", data, right);
+			g_autofree gchar *new_data = add_osd_extra(data, extra);
 			std::swap(data, new_data);
 			}
 
+		// Replace name with data
 		g_string_erase(osd_info, pos, end-start+1);
 		if (data && *data)
 			{
@@ -429,7 +400,7 @@ gchar *image_osd_mkinfo(const gchar *str, FileData *fd, const OsdTemplate &vars)
 			{
 			/* pipe character is replaced by a separator, delete it
 			 * and raise a flag if needed */
-			g_string_erase(osd_info, pos--, 1);
+			g_string_erase(osd_info, pos, 1);
 			want_separator |= (data && *data);
 			}
 
@@ -439,7 +410,8 @@ gchar *image_osd_mkinfo(const gchar *str, FileData *fd, const OsdTemplate &vars)
 		}
 
 	/* search and destroy empty lines */
-	end = osd_info->str;
+	gchar *start;
+	gchar *end = osd_info->str;
 	while ((start = strchr(end, '\n')))
 		{
 		end = start;
@@ -448,7 +420,7 @@ gchar *image_osd_mkinfo(const gchar *str, FileData *fd, const OsdTemplate &vars)
 		g_string_erase(osd_info, start-osd_info->str, end-start-1);
 		}
 
-	ret = g_string_free(osd_info, FALSE);
+	gchar *ret = g_string_free(osd_info, FALSE);
 
 	return g_strchomp(ret);
 }
