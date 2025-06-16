@@ -397,25 +397,33 @@ void vflist_popup_destroy_cb(ViewFile *vf)
 
 static gboolean vflist_row_rename_cb(TreeEditData *, const gchar *old_name, const gchar *new_name, gpointer data)
 {
-	if (!new_name || !new_name[0]) return FALSE;
+        if (!new_name || !new_name[0]) return FALSE;
 
-	auto vf = static_cast<ViewFile *>(data);
+        auto vf = static_cast<ViewFile *>(data);
 
-	if (strchr(new_name, G_DIR_SEPARATOR) != nullptr)
-		{
-		g_autofree gchar *text = g_strdup_printf(_("Invalid file name:\n%s"), new_name);
-		file_util_warning_dialog(_("Error renaming file"), text, GQ_ICON_DIALOG_ERROR, vf->listview);
-		}
-	else
-		{
-		g_autofree gchar *old_path = g_build_filename(vf->dir_fd->path, old_name, NULL);
-		FileData *fd = file_data_new_group(old_path); /* get the fd from cache */
+        g_autofree gchar *old_path = g_build_filename(vf->dir_fd->path, old_name, NULL);
+        FileData *fd = file_data_new_group(old_path); /* get the fd from cache */
 
-		g_autofree gchar *new_path = g_build_filename(vf->dir_fd->path, new_name, NULL);
-		file_util_rename_simple(fd, new_path, vf->listview);
+        if (!access_file(fd->path, W_OK))
+                {
+                g_autofree gchar *text = g_strdup_printf(_("Unable to rename file %s\nPermissions do not allow writing to the file."), fd->path);
+                file_util_warning_dialog(_("Error renaming file"), text, GQ_ICON_DIALOG_ERROR, vf->listview);
+                file_data_unref(fd);
+                return FALSE;
+                }
 
-		file_data_unref(fd);
-		}
+        if (strchr(new_name, G_DIR_SEPARATOR) != nullptr)
+                {
+                g_autofree gchar *text = g_strdup_printf(_("Invalid file name:\n%s"), new_name);
+                file_util_warning_dialog(_("Error renaming file"), text, GQ_ICON_DIALOG_ERROR, vf->listview);
+                }
+        else
+                {
+                g_autofree gchar *new_path = g_build_filename(vf->dir_fd->path, new_name, NULL);
+                file_util_rename_simple(fd, new_path, vf->listview);
+
+                file_data_unref(fd);
+                }
 
 	return FALSE;
 }
