@@ -30,8 +30,12 @@
 #include <vector>
 
 #include <glib.h>
+#include <glib/gstdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "filedata.h"
+#include "options.h"
 
 namespace {
 
@@ -178,8 +182,8 @@ TEST_F(FileDataTest, BasicIncrementVersionWithParent)
 
 TEST_F(FileDataTest, FileDataRef)
 {
-	fd = g_new0(FileData, 1);
-	fd->magick = FD_MAGICK;
+        fd = g_new0(FileData, 1);
+        fd->magick = FD_MAGICK;
 	// Avoids having the FileData object automatically freed when its
 	// refcount drops back to zero.
 	file_data_lock(fd);
@@ -201,7 +205,42 @@ TEST_F(FileDataTest, FileDataRef)
 	}
 
 	// And refcount drops back down to 0 after both of the FileDataRefs go out of scope.
-	ASSERT_EQ(0, fd->ref);
+        ASSERT_EQ(0, fd->ref);
+}
+
+TEST_F(FileDataTest, VerifyCiWarnsOnReadonlyFile)
+{
+        g_autoptr(GError) error = nullptr;
+        g_autofree gchar *tmp_dir = g_dir_make_tmp("gq-testXXXXXX", &error);
+        ASSERT_NE(tmp_dir, nullptr);
+
+        g_autofree gchar *src_path = g_build_filename(tmp_dir, "source.txt", NULL);
+        g_autofree gchar *dest_path = g_build_filename(tmp_dir, "dest.txt", NULL);
+
+        FILE *f = g_fopen(src_path, "w");
+        ASSERT_NE(f, nullptr);
+        fputs("data", f);
+        fclose(f);
+
+        ASSERT_EQ(0, chmod(src_path, S_IRUSR));
+
+        options = init_options(nullptr);
+        setup_default_options(options);
+
+        fd = FileData::file_data_new_simple(src_path, &context);
+        ASSERT_NE(fd, nullptr);
+
+        ASSERT_TRUE(file_data_sc_add_ci_rename(fd, dest_path));
+
+        GList *list = nullptr;
+        list = g_list_append(list, fd);
+        gint err = file_data_verify_ci(fd, list);
+        EXPECT_NE(0, err & CHANGE_WARN_NO_WRITE_PERM);
+
+        g_list_free(list);
+
+        unlink(src_path);
+        g_rmdir(tmp_dir);
 }
 
 }  // anonymous namespace
