@@ -559,15 +559,18 @@ void vficon_select_all(ViewFile *vf)
 	g_list_free(VFICON(vf)->selection);
 	VFICON(vf)->selection = nullptr;
 
-	work = vf->list;
-	while (work)
-		{
-		auto fd = static_cast<FileData *>(work->data);
-		work = work->next;
+        work = vf->list;
+        GList *tmp = nullptr;
+        while (work)
+                {
+                auto fd = static_cast<FileData *>(work->data);
+                work = work->next;
 
-		VFICON(vf)->selection = g_list_append(VFICON(vf)->selection, fd);
-		vficon_selection_add(vf, fd, SELECTION_SELECTED, nullptr);
-		}
+                tmp = g_list_prepend(tmp, fd);
+                vficon_selection_add(vf, fd, SELECTION_SELECTED, nullptr);
+                }
+
+        VFICON(vf)->selection = g_list_reverse(tmp);
 
 	vf_send_update(vf);
 }
@@ -801,17 +804,20 @@ void vficon_select_list(ViewFile *vf, GList *list)
 
 	if (!list) return;
 
-	work = list;
-	while (work)
-		{
-		fd = static_cast<FileData *>(work->data);
-		if (g_list_find(vf->list, fd))
-			{
-			VFICON(vf)->selection = g_list_append(VFICON(vf)->selection, fd);
-			vficon_selection_add(vf, fd, SELECTION_SELECTED, nullptr);
-			}
-		work = work->next;
-		}
+        work = list;
+        GList *tmp = nullptr;
+        while (work)
+                {
+                fd = static_cast<FileData *>(work->data);
+                if (g_list_find(vf->list, fd))
+                        {
+                        tmp = g_list_prepend(tmp, fd);
+                        vficon_selection_add(vf, fd, SELECTION_SELECTED, nullptr);
+                        }
+                work = work->next;
+                }
+
+        VFICON(vf)->selection = g_list_concat(VFICON(vf)->selection, g_list_reverse(tmp));
 }
 
 void vficon_mark_to_selection(ViewFile *vf, gint mark, MarkToSelectionMode mode)
