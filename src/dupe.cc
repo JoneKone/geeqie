@@ -5292,18 +5292,20 @@ static void dupe_pop_menu_export_cb(GtkWidget *widget, gpointer data)
 	 */
 	GList *list = history_list_get_by_key("export_duplicates");
 
-	g_autoptr(GList) reversed = g_list_reverse(g_list_copy(list));
-	GList *unique_dirs = nullptr; // @TODO Use STL container of std::string. E.g. unsorted_set if order is not important.
+        g_autoptr(GList) reversed = g_list_reverse(g_list_copy(list));
+        GList *unique_dirs = nullptr; // @TODO Use STL container of std::string. E.g. unsorted_set if order is not important.
+        gint unique_count = 0;
 
-	for (GList *work = reversed; work != nullptr && g_list_length(unique_dirs) < 3; work = work->next)
-		{
-		g_autofree gchar *dir = g_path_get_dirname((gchar *)work->data);
+        for (GList *work = reversed; work != nullptr && unique_count < 3; work = work->next)
+                {
+                g_autofree gchar *dir = g_path_get_dirname((gchar *)work->data);
 
-		if (!g_list_find_custom(unique_dirs, dir, (GCompareFunc)g_strcmp0))
-			{
-			unique_dirs = g_list_prepend(unique_dirs, g_strdup(dir));
-			}
-		}
+                if (!g_list_find_custom(unique_dirs, dir, (GCompareFunc)g_strcmp0))
+                        {
+                        unique_dirs = g_list_prepend(unique_dirs, g_strdup(dir));
+                        unique_count++;
+                        }
+                }
 
 	for (GList *work = unique_dirs; work; work = work->next)
 		{
